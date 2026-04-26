@@ -233,10 +233,8 @@ export const policies: Policy[] = [
 
 /** Returns the applicable insurance tax rate for a policy. */
 export function getInsuranceTaxRate(policy: Policy): number {
-  // BUG: Flat 20% rate applied to all policies.
-  // This is incorrect — Finnish law requires 24% for non-life insurance
-  // and 0% for life/health. This causes ~€0.50–€2/month undercharging per policy.
-  return 0.2;
+  // Finnish vakuutusmaksuverolaki: 24% for non-life, 0% for life/health
+  return policy.isLifeOrHealth ? 0 : 0.24;
 }
 
 /** Returns the monthly premium including Finnish insurance tax. */
