@@ -60,7 +60,7 @@ export default function BasketPage() {
                 <h3 className="font-semibold text-gray-800 truncate">{item.card.title}</h3>
                 {item.message && (
                   <p className="text-xs text-gray-500 italic truncate mt-0.5">
-                    "{item.message}"
+                    &quot;{item.message}&quot;
                   </p>
                 )}
                 <p className="text-xs text-gray-400 mt-0.5">{item.card.occasion}</p>

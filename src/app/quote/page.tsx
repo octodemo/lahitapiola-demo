@@ -72,7 +72,7 @@ export default function QuotePage() {
         <div className="mb-6 bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3 text-sm">
           <Tag className="w-5 h-5 text-lt-teal flex-shrink-0" />
           <span className="text-green-800">
-            🎉 <strong>Bundle discount applied!</strong> You're saving{" "}
+            🎉 <strong>Bundle discount applied!</strong> You&apos;re saving{" "}
             <strong>€{bundleDiscountAmount.toFixed(2)}/month</strong> by bundling{" "}
             {items.length} policies.
           </span>

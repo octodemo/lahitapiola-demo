@@ -14,7 +14,7 @@ export default function HomePage() {
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
               <span className="inline-block bg-lt-teal text-white text-sm font-semibold px-4 py-1 rounded-full mb-5">
-                🇫🇮 Finland's most trusted mutual insurer
+                🇫🇮 Finland&apos;s most trusted mutual insurer
               </span>
               <h1 className="text-4xl md:text-5xl font-black leading-tight mb-5">
                 Insurance that works{" "}

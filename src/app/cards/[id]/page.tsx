@@ -141,7 +141,7 @@ export default function CardDetailPage({ params }: { params: { id: string } }) {
           <div className="mt-6 bg-gray-50 rounded-xl p-4 text-sm text-gray-600 space-y-1">
             <p>🚚 <strong>Next Day Delivery</strong> available on orders before 9pm</p>
             <p>📦 <strong>Standard Delivery</strong> £2.99 — arrives in 2–3 days</p>
-            <p>✅ <strong>Satisfaction Guaranteed</strong> — not happy? We'll resend for free</p>
+            <p>✅ <strong>Satisfaction Guaranteed</strong> — not happy? We&apos;ll resend for free</p>
           </div>
         </div>
       </div>

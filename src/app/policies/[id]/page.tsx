@@ -62,7 +62,7 @@ export default function PolicyDetailPage({ params }: { params: { id: string } })
           <div className="bg-lt-cream rounded-2xl p-6">
             <h3 className="font-bold text-lt-navy mb-4 flex items-center gap-2">
               <Shield className="w-5 h-5" />
-              What's covered
+              What&apos;s covered
             </h3>
             <ul className="space-y-2">
               {policy.coverageHighlights.map((highlight) => (
