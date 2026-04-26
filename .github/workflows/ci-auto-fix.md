@@ -170,16 +170,17 @@ Use `create-pull-request` to propose the fixes. Set:
 - `body`: A description of what was fixed, referencing the failing PR
 - `branch`: `ci-fix/<branch>` (or similar)
 
-The PR should include a message in the body about using `[skip actions]` as commit prefix to prevent CI loops if merged back manually.
+Include a note in the PR body that any commits squashed back to the original branch should contain `[skip actions]` anywhere in the commit message to prevent this workflow from triggering again in a loop.
 
-> **Note:** If you have write access to the branch (via a configured PAT secret), you may instead commit and push directly to the branch using:
+> **Note:** If write access to the branch is available (via a configured PAT secret), you may instead commit and push directly to the PR branch:
 > ```bash
 > git config user.name "github-actions[bot]"
 > git config user.email "github-actions[bot]@users.noreply.github.com"
 > git add -A
 > git commit -m "fix: auto-fix ESLint errors [skip actions]"
-> git push
+> git push origin HEAD:<original-branch-name>
 > ```
+> Including `[skip actions]` anywhere in the commit message tells GitHub Actions to skip triggering this workflow on that push, preventing a CI loop.
 
 ### Step 7 — Update the PR Comment with Final Status
 
