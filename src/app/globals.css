@@ -3,6 +3,16 @@
 @tailwind utilities;
 
 :root {
+  /* LähiTapiola brand tokens */
+  --lt-navy: #003876;
+  --lt-navy-dark: #002558;
+  --lt-teal: #00A878;
+  --lt-teal-dark: #008A62;
+  --lt-orange: #E8620A;
+  --lt-orange-dark: #C45008;
+  --lt-cream: #F0F4F8;
+
+  /* Legacy (kept so /cards route still works) */
   --moonpig-pink: #E8175D;
   --moonpig-pink-dark: #C4124F;
 }
@@ -11,12 +21,17 @@ html {
   scroll-behavior: smooth;
 }
 
+/* LähiTapiola primary CTA */
 .btn-primary {
-  @apply bg-moonpig-pink hover:bg-moonpig-pink-dark text-white font-semibold py-3 px-6 rounded-full transition-all duration-200 shadow-md hover:shadow-lg active:scale-95;
+  @apply bg-lt-orange hover:bg-lt-orange-dark text-white font-semibold py-3 px-6 rounded-full transition-all duration-200 shadow-md hover:shadow-lg active:scale-95;
 }
 
 .btn-secondary {
-  @apply border-2 border-moonpig-pink text-moonpig-pink hover:bg-moonpig-pink hover:text-white font-semibold py-3 px-6 rounded-full transition-all duration-200;
+  @apply border-2 border-lt-navy text-lt-navy hover:bg-lt-navy hover:text-white font-semibold py-3 px-6 rounded-full transition-all duration-200;
+}
+
+.btn-teal {
+  @apply bg-lt-teal hover:bg-lt-teal-dark text-white font-semibold py-3 px-6 rounded-full transition-all duration-200 shadow-md hover:shadow-lg active:scale-95;
 }
 
 .card-hover {
