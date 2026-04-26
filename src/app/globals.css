@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --moonpig-pink: #E8175D;
+  --moonpig-pink-dark: #C4124F;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+.btn-primary {
+  @apply bg-moonpig-pink hover:bg-moonpig-pink-dark text-white font-semibold py-3 px-6 rounded-full transition-all duration-200 shadow-md hover:shadow-lg active:scale-95;
+}
+
+.btn-secondary {
+  @apply border-2 border-moonpig-pink text-moonpig-pink hover:bg-moonpig-pink hover:text-white font-semibold py-3 px-6 rounded-full transition-all duration-200;
+}
+
+.card-hover {
+  @apply hover:-translate-y-1 hover:shadow-xl transition-all duration-200;
+}
