@@ -153,13 +153,6 @@ export default function QuotePage() {
                 <span className="font-medium">€{totalMonthlyWithTax.toFixed(2)}/mo</span>
               </div>
 
-              {bundleDiscountActive && (
-                <div className="flex justify-between text-lt-teal font-medium">
-                  <span>Bundle discount (−{(BUNDLE_DISCOUNT_RATE * 100).toFixed(0)}%)</span>
-                  <span>−€{bundleDiscountAmount.toFixed(2)}/mo</span>
-                </div>
-              )}
-
               <div className="border-t border-gray-100 pt-3 flex justify-between font-black text-lg text-gray-900">
                 <span>Monthly total</span>
                 <span className="text-lt-navy">€{totalMonthlyAfterDiscount.toFixed(2)}</span>
