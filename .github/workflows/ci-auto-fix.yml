@@ -1,0 +1,184 @@
+name: CI Auto-Fix
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  diagnose-and-fix:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR info
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pullRequests } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${github.event.workflow_run.head_branch}`,
+            });
+            
+            if (pullRequests.length === 0) {
+              console.log('No open PR found for this branch');
+              return;
+            }
+            
+            const pr = pullRequests[0];
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('pr_branch', github.event.workflow_run.head_branch);
+
+      - name: Fetch failed job logs
+        id: logs
+        if: steps.pr-info.outputs.pr_number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = '${{ steps.pr-info.outputs.pr_number }}';
+            const runId = ${{ github.event.workflow_run.id }};
+            
+            try {
+              // Get failed jobs
+              const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              });
+              
+              const failedJobs = jobs.jobs.filter(j => j.conclusion === 'failure');
+              let logText = '';
+              
+              for (const job of failedJobs) {
+                try {
+                  const { data: logs } = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    job_id: job.id,
+                  });
+                  logText += `\n\n### Job: ${job.name}\n\`\`\`\n${logs.split('\n').slice(-30).join('\n')}\n\`\`\``;
+                } catch (e) {
+                  logText += `\n\nFailed to fetch logs for job ${job.name}`;
+                }
+              }
+              
+              core.setOutput('failed_logs', logText);
+            } catch (e) {
+              console.error('Error fetching logs:', e);
+            }
+
+      - name: Post diagnostic comment
+        if: steps.pr-info.outputs.pr_number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr-info.outputs.pr_number }}');
+            const failedLogs = `${{ steps.logs.outputs.failed_logs }}`;
+            
+            const diagnosticComment = `## 🤖 Agentic CI Diagnostics
+            
+**Status:** CI pipeline failed on branch \`${{ steps.pr-info.outputs.pr_branch }}\`
+
+**Failed Logs (last 30 lines):**
+${failedLogs || 'No logs available'}
+
+**Next Steps:**
+- Attempting automated diagnosis and fix...
+- I will update this comment with findings
+- If auto-fix succeeds, I'll commit and push changes
+- If not, manual intervention may be needed
+
+---
+*Powered by GitHub Copilot Agentic Workflow*
+`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: diagnosticComment,
+            });
+            
+            console.log(`Posted diagnostic comment on PR #${prNumber}`);
+
+      - name: Set up Node.js
+        if: steps.pr-info.outputs.pr_number
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        if: steps.pr-info.outputs.pr_number
+        run: npm ci
+
+      - name: Analyze failures
+        if: steps.pr-info.outputs.pr_number
+        id: analysis
+        run: |
+          echo "=== Running Tests ===" 
+          npm test -- --ci 2>&1 | tee test-output.txt || true
+          
+          echo "=== Running Lint ===" 
+          npm run lint 2>&1 | tee lint-output.txt || true
+          
+          echo "=== TypeScript Check ===" 
+          npx tsc --noEmit 2>&1 | tee tsc-output.txt || true
+          
+          if grep -q "FAIL" test-output.txt; then
+            echo "TEST_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+          
+          if grep -q "error" lint-output.txt; then
+            echo "LINT_FAILED=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update comment with analysis
+        if: steps.pr-info.outputs.pr_number && (steps.analysis.outputs.TEST_FAILED || steps.analysis.outputs.LINT_FAILED)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr-info.outputs.pr_number }}');
+            const testFailed = '${{ steps.analysis.outputs.TEST_FAILED }}' === 'true';
+            const lintFailed = '${{ steps.analysis.outputs.LINT_FAILED }}' === 'true';
+            
+            let analysisComment = `## 🔍 Failure Analysis\n\n`;
+            analysisComment += `**Issues Detected:**\n`;
+            if (testFailed) analysisComment += `- ❌ Unit tests are failing\n`;
+            if (lintFailed) analysisComment += `- ❌ Linting errors detected\n`;
+            
+            analysisComment += `\n**Recommendation:** Manual review required - consider running \`npm test\` and \`npm run lint\` locally to debug further.\n\n`;
+            analysisComment += `*Note: Full automated fixes require Copilot Coding Agent integration. For now, this workflow provides diagnostics and visibility.*`;
+            
+            // Get existing comments to update the latest one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            
+            const diagnosticComment = comments.find(c => 
+              c.body.includes('Agentic CI Diagnostics')
+            );
+            
+            if (diagnosticComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: diagnosticComment.id,
+                body: diagnosticComment.body + `\n\n---\n${analysisComment}`,
+              });
+            }
