@@ -10,6 +10,7 @@ permissions:
   contents: write       # needed to commit auto-fixes back to the branch
   pull-requests: write  # needed to post/update PR comments
   actions: read         # needed to download job logs
+  models: read          # needed to access GitHub Models API for AI analysis
 
 jobs:
   diagnose-and-fix:
