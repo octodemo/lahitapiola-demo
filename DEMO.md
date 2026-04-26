@@ -1,4 +1,290 @@
-# 🐷 Moonpig Demo Script — GitHub Copilot
+# LähiTapiola Demo Script — GitHub Copilot
+
+> **Audience:** Engineering leadership / senior engineers  
+> **Duration:** ~30–40 minutes  
+> **Goal:** Show how GitHub Copilot accelerates real development work on a realistic codebase — codebase understanding, feature implementation with tests, and agentic incident triage
+
+---
+
+## Overview
+
+This demo uses a Finnish insurance buying app to showcase three distinct Copilot capabilities. The app has a real Next.js architecture, TypeScript types, React Context state, a Jest test suite, and a CI pipeline — similar to what you'd find in a production codebase.
+
+The three moments are designed to escalate in ambition:
+
+| # | Moment | What it shows |
+|---|--------|---------------|
+| 1 | Codebase understanding + change impact | Copilot reads your whole codebase, not just one file |
+| 2 | Implement feature + write tests | Copilot as a coding collaborator, not just autocomplete |
+| 3 | Agentic triage loop | Copilot detects a CI failure, diagnoses the bug, and fixes it autonomously |
+
+---
+
+## Pre-Demo Setup Checklist
+
+Do this **before** the call starts:
+
+- [ ] `cd lahitapiola-demo && npm run dev` — confirm app at http://localhost:3000
+- [ ] Open VS Code with the `lahitapiola-demo` folder
+- [ ] Open these files in tabs, ready to switch to:
+  - `src/data/policies.ts`
+  - `src/app/quote/page.tsx`
+  - `src/context/QuoteContext.tsx`
+  - `__tests__/premiumCalculator.test.ts`
+- [ ] Enable **Copilot Chat** sidebar, switch to **agent mode**
+- [ ] Open http://localhost:3000 in browser (full screen)
+- [ ] Open http://localhost:3000/policies in a second tab
+- [ ] Open http://localhost:3000/policies/home-apartment in a third tab
+- [ ] Have https://github.com/octodemo/lahitapiola-demo/pull/2 open in a browser tab (for Demo 3)
+- [ ] Terminal open and ready
+- [ ] Run `npm test` once to confirm 25 tests pass — shows the green baseline
+
+---
+
+## Demo Act 1: The App (5 minutes)
+
+**Goal:** Ground the audience in what we're working with before touching Copilot.
+
+### Script
+
+> "Before we show Copilot, let me walk you through the app. It's a Finnish insurance quote platform — home, car, health, life, travel, pet. Built with Next.js 14, TypeScript, Tailwind — the kind of stack your teams use every day."
+
+**Walk through:**
+
+1. **Homepage** (http://localhost:3000)
+   - Show the hero, category tiles, trust bar, bundle CTA
+   - "Proper production structure — components, context, typed data layer"
+
+2. **Policy catalogue** (http://localhost:3000/policies)
+   - Filter by "Car" — grid updates live
+   - "Client-side filtering hooked into `src/data/policies.ts`"
+
+3. **Policy detail** (http://localhost:3000/policies/home-apartment)
+   - Point out the Finnish tax breakdown (24% on non-life)
+   - Type a name in the insured field, click **Add to Quote**
+   - Show the quote badge counter increment in the navbar
+
+4. **Quote summary** (http://localhost:3000/quote)
+   - Add 2 more policies to trigger the bundle discount
+   - Show the **10% bundle discount** appearing live
+   - "The logic lives in `QuoteContext.tsx`. There's a TODO comment in `quote/page.tsx` we'll use in a moment."
+
+---
+
+## Demo Act 2: Codebase Understanding + Change Impact (10 minutes)
+
+**Goal:** Show Copilot reading and reasoning across the whole codebase.
+
+**File:** `src/data/policies.ts`  
+**Hook:** The comment at the top of the file says *"DEMO MOMENT 1"*
+
+### Step 1 — Ask Copilot to analyse impact
+
+Open Copilot Chat (agent mode). Type:
+
+```
+If I change the monthlyPremium field on the Policy interface from a flat number
+to an object { base: number; addons: number[] }, what files in this codebase
+would be affected, and what would need to change in each one?
+```
+
+> **Talking point while Copilot works:** "We're not asking it to make any changes yet — we're asking it to *think*. This is critical for large codebases where a data model change can ripple unexpectedly."
+
+Copilot should identify all 5 touch points:
+1. `src/data/policies.ts` — type definition + `monthlyPremiumWithTax()` helper
+2. `src/components/PolicyCard.tsx` — renders `policy.monthlyPremium` in the grid
+3. `src/app/policies/[id]/page.tsx` — shows premium + tax breakdown
+4. `src/context/QuoteContext.tsx` — aggregates premiums for quote total
+5. `src/app/quote/page.tsx` — line items + discount calculation
+
+### Step 2 — Follow up on one file
+
+```
+Focus on QuoteContext.tsx. Show me exactly what the totalMonthlyWithTax
+calculation would look like after the change.
+```
+
+> **Talking point:** "It's not just listing files — it's reasoning about what the actual code change looks like in context. That's the difference between a search tool and a thinking collaborator."
+
+---
+
+## Demo Act 3: Implement Feature + Write Tests (12 minutes)
+
+**Goal:** Show Copilot implementing a feature and writing the test suite for it.
+
+**File:** `src/app/quote/page.tsx`  
+**Hook:** Find the `TODO` comment (clearly marked *DEMO MOMENT 2*)
+
+### Step 1 — Ask Copilot to implement
+
+```
+In src/app/quote/page.tsx, find the TODO comment about the bundle discount
+line item. Add a "Bundle discount (–10%)" row to the quote breakdown table.
+It should only appear when bundleDiscountActive is true, show the discount
+percentage, display the saving amount in green, and align with the existing
+table layout.
+```
+
+> **Talking point while Copilot works:** "Watch it read the existing JSX structure — it's picking up the Tailwind classes, the existing row pattern, the colour tokens from globals.css. It's writing *our* code, not generic code."
+
+### Step 2 — Show the result in browser
+
+- Refresh `/quote` with 3+ policies — the discount row appears
+- "One prompt. No copy-paste. It matched the design system perfectly."
+
+### Step 3 — Ask for tests
+
+```
+Now write tests for the bundle discount calculation in __tests__/discount.test.ts.
+Cover: no discount below the threshold, discount applied at exactly 3 policies,
+correct discount amount on a real policy mix, and that the threshold and rate
+constants match expectations.
+```
+
+> **Talking point:** "This is the shift engineers feel most. Not just 'write code' — but 'write code *and* prove it works'. The test file already has some stubs; watch Copilot fill them in using the real policy data from `policies.ts`."
+
+### Step 4 — Run the tests live
+
+```bash
+npm test
+```
+
+> "25 tests, all green. The implementation and the proof — in one conversation."
+
+---
+
+## Demo Act 4: Agentic Triage Loop (8 minutes)
+
+**Goal:** Show the Copilot cloud agent detecting a CI failure, understanding the root cause, and fixing it autonomously.
+
+**PR:** https://github.com/octodemo/lahitapiola-demo/pull/2
+
+### Background (explain to audience)
+
+> "Someone opened a PR that 'fixes' the insurance tax rate. The commit message looks fine. But our CI runs `npm test` on every PR — and it's failing. Let's see Copilot triage it."
+
+### Step 1 — Show the failing PR
+
+Open PR #2 in the browser. Show:
+- The commit: "fix: update insurance tax rate"
+- The CI check: ❌ `Unit Tests` failing
+- Click into the failing check — show the test output:
+  ```
+  ✕ returns 24% for non-life insurance (home)
+    Expected: 0.24
+    Received: 0.2
+  ```
+
+> "The test is crystal clear — the function is returning 20% instead of 24%. Finnish insurance law requires 24% on non-life policies. This is a real compliance bug."
+
+### Step 2 — Assign to Copilot agent
+
+Open the PR in Copilot Workspace (or assign to Copilot from the Assignees panel):
+
+> "Instead of paging an engineer at midnight, we assign this to the Copilot agent. It will read the failing test, find the broken function, fix it, and push a commit."
+
+### Step 3 — Walk through what the agent does
+
+While the agent works (or narrate from a pre-run result):
+
+1. Agent reads the CI log → identifies `getInsuranceTaxRate()` in `src/data/policies.ts`
+2. Sees `return 0.2` instead of `return policy.isLifeOrHealth ? 0 : 0.24`
+3. Applies the fix, pushes a commit
+4. CI re-runs → ✅ all 25 tests pass
+
+> "No Slack message. No incident channel. No engineer pulled off their current task. The agent closed the loop — detected, diagnosed, fixed, verified."
+
+### Step 4 — Key talking point
+
+> "What makes this powerful isn't just that it fixed one bug. It's that the agent *understood why* the test was failing — it knew about Finnish insurance tax law because that context is in the codebase comments and the test descriptions. Copilot reads your domain knowledge, not just your syntax."
+
+---
+
+## Key Talking Points
+
+### For Engineering Leaders
+
+- **"Copilot reads your codebase, not just your file."** The change impact analysis in Demo 1 only works because it indexes the whole repo. This is fundamentally different from autocomplete.
+
+- **"Tests become a first-class output, not an afterthought."** When writing tests takes seconds, engineers actually write them. That changes your quality culture.
+
+- **"The agent works in your CI pipeline."** It's not a chatbot — it runs your tests, reads the output, and responds to it. That's a new category of automation.
+
+- **"Your senior engineers spend less time on triage."** The agentic loop handles the routine investigation. Seniors spend their time on architecture decisions, not `git bisect`.
+
+### For CTOs / VPs Engineering
+
+- **Velocity:** GitHub's data shows 55% faster task completion for common development workflows.
+- **Quality:** Teams using Copilot write more tests, not fewer. The tool makes testing cheaper, so it happens more.
+- **Risk:** The compliance bug in Demo 3 (wrong VAT rate) would have been a real financial and regulatory risk. Automated triage catches it before it ships.
+- **Adoption:** No migration required. Works in the IDE, the browser, the CI pipeline. Meets engineers where they are.
+
+---
+
+## Recovery Plan
+
+### If the dev server crashes
+
+```bash
+cd lahitapiola-demo && npm run dev
+```
+
+### If Copilot produces broken TypeScript
+
+```bash
+# Reset the file
+git checkout -- src/app/quote/page.tsx
+
+# Confirm tests still pass
+npm test
+```
+
+### If Copilot is slow or unresponsive
+
+- Check https://githubstatus.com
+- Walk through the pre-existing `__tests__/discount.test.ts` file and explain what *would* have been generated
+- For Demo 3, show the diff of the fixed PR manually — the 1-line change is self-explanatory
+
+### If the audience asks about something outside the demo scope
+
+- "Great question — let me follow up after the call with a specific example"
+- Don't ad-lib features live
+- The change-impact analysis (Demo 1) is a great fallback — it always works and always impresses
+
+---
+
+## Appendix: All Copilot Prompts (Quick Reference)
+
+### Demo 2 — Change Impact
+
+```
+If I change the monthlyPremium field on the Policy interface from a flat number
+to an object { base: number; addons: number[] }, what files in this codebase
+would be affected, and what would need to change in each one?
+```
+
+```
+Focus on QuoteContext.tsx. Show me exactly what the totalMonthlyWithTax
+calculation would look like after the change.
+```
+
+### Demo 3 — Feature + Tests
+
+```
+In src/app/quote/page.tsx, find the TODO comment about the bundle discount
+line item. Add a "Bundle discount (–10%)" row to the quote breakdown table.
+It should only appear when bundleDiscountActive is true, show the discount
+percentage, display the saving amount in green, and align with the existing
+table layout.
+```
+
+```
+Now write tests for the bundle discount calculation in __tests__/discount.test.ts.
+Cover: no discount below the threshold, discount applied at exactly 3 policies,
+correct discount amount on a real policy mix, and that the threshold and rate
+constants match expectations.
+```
+
 
 > **Audience:** Moonpig Engineering Leadership  
 > **Duration:** ~30–40 minutes  
