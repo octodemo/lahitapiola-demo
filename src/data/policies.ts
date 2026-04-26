@@ -233,6 +233,7 @@ export const policies: Policy[] = [
 
 /** Returns the applicable insurance tax rate for a policy. */
 export function getInsuranceTaxRate(policy: Policy): number {
+  // Finnish vakuutusmaksuverolaki: 24% for non-life, 0% for life/health
   return policy.isLifeOrHealth ? 0 : 0.24;
 }
 
