@@ -1,184 +1,363 @@
 name: CI Auto-Fix
 
+# Triggers whenever the CI workflow completes so we can react to failures.
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
 
 permissions:
-  contents: write
-  pull-requests: write
-  checks: read
-  statuses: read
+  contents: write       # needed to commit auto-fixes back to the branch
+  pull-requests: write  # needed to post/update PR comments
+  actions: read         # needed to download job logs
 
 jobs:
   diagnose-and-fix:
+    name: Diagnose and auto-fix CI failure
     runs-on: ubuntu-latest
+    # Only run when the upstream CI workflow actually failed
     if: github.event.workflow_run.conclusion == 'failure'
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
+    steps:
+      # ── 1. Find the open PR that matches the failing branch ────────────────
       - name: Get PR info
         id: pr-info
         uses: actions/github-script@v7
         with:
           script: |
+            const branch = context.payload.workflow_run.head_branch;
             const { data: pullRequests } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
-              head: `${context.repo.owner}:${github.event.workflow_run.head_branch}`,
+              head: `${context.repo.owner}:${branch}`,
             });
-            
+
             if (pullRequests.length === 0) {
-              console.log('No open PR found for this branch');
+              core.notice(`No open PR found for branch "${branch}" — skipping.`);
               return;
             }
-            
-            const pr = pullRequests[0];
-            core.setOutput('pr_number', pr.number);
-            core.setOutput('pr_branch', github.event.workflow_run.head_branch);
 
-      - name: Fetch failed job logs
+            const pr = pullRequests[0];
+            core.setOutput('pr_number', String(pr.number));
+            core.setOutput('pr_branch', branch);
+            core.info(`Found PR #${pr.number} for branch "${branch}"`);
+
+      # ── 2. Checkout the PR branch so we can run tooling and commit fixes ───
+      - name: Checkout PR branch
+        if: steps.pr-info.outputs.pr_number != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr-info.outputs.pr_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 3. Collect failed-job names and log snippets ───────────────────────
+      - name: Fetch failed job info
         id: logs
-        if: steps.pr-info.outputs.pr_number
+        if: steps.pr-info.outputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = '${{ steps.pr-info.outputs.pr_number }}';
-            const runId = ${{ github.event.workflow_run.id }};
-            
-            try {
-              // Get failed jobs
-              const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: runId,
-              });
-              
-              const failedJobs = jobs.jobs.filter(j => j.conclusion === 'failure');
-              let logText = '';
-              
-              for (const job of failedJobs) {
-                try {
-                  const { data: logs } = await github.rest.actions.downloadJobLogsForWorkflowRun({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    job_id: job.id,
-                  });
-                  logText += `\n\n### Job: ${job.name}\n\`\`\`\n${logs.split('\n').slice(-30).join('\n')}\n\`\`\``;
-                } catch (e) {
-                  logText += `\n\nFailed to fetch logs for job ${job.name}`;
-                }
+            const runId = context.payload.workflow_run.id;
+            const { data: { jobs } } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+
+            const failedJobs = jobs.filter(j => j.conclusion === 'failure');
+            const jobNames = failedJobs.map(j => j.name);
+            core.setOutput('failed_job_names', jobNames.join(', '));
+
+            // Build a logs section for the comment (last 40 lines per job)
+            const runUrl = context.payload.workflow_run.html_url;
+            let logSection = '';
+            for (const job of failedJobs) {
+              try {
+                const logsResp = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  job_id: job.id,
+                });
+                // The API returns the raw log text as a string
+                const logText = typeof logsResp.data === 'string'
+                  ? logsResp.data
+                  : JSON.stringify(logsResp.data);
+                // Strip ANSI colour codes and timestamps, keep last 40 lines
+                const clean = logText
+                  .replace(/\x1b\[[0-9;]*m/g, '')
+                  .replace(/^\d{4}-\d{2}-\d{2}T[^ ]+ /gm, '');
+                const snippet = clean.split('\n').filter(Boolean).slice(-40).join('\n');
+                logSection += `\n\n<details>\n<summary>📋 <b>${job.name}</b> — last 40 log lines</summary>\n\n\`\`\`\n${snippet}\n\`\`\`\n</details>`;
+              } catch (e) {
+                logSection += `\n\n_Could not download logs for **${job.name}**: ${e.message}_`;
               }
-              
-              core.setOutput('failed_logs', logText);
-            } catch (e) {
-              console.error('Error fetching logs:', e);
             }
 
-      - name: Post diagnostic comment
-        if: steps.pr-info.outputs.pr_number
+            core.setOutput('log_section', logSection || '_No logs available._');
+            core.setOutput('run_url', runUrl);
+
+      # ── 4. Post an initial diagnostic comment on the PR ────────────────────
+      - name: Post initial diagnostic comment
+        id: initial-comment
+        if: steps.pr-info.outputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = parseInt('${{ steps.pr-info.outputs.pr_number }}');
-            const failedLogs = `${{ steps.logs.outputs.failed_logs }}`;
-            
-            const diagnosticComment = `## 🤖 Agentic CI Diagnostics
-            
-**Status:** CI pipeline failed on branch \`${{ steps.pr-info.outputs.pr_branch }}\`
+            const prNumber = Number(process.env.PR_NUMBER);
+            const branch   = process.env.PR_BRANCH;
+            const jobNames = process.env.FAILED_JOB_NAMES || '_(unknown)_';
+            const logSection = process.env.LOG_SECTION;
+            const runUrl   = process.env.RUN_URL;
 
-**Failed Logs (last 30 lines):**
-${failedLogs || 'No logs available'}
+            const body = [
+              '## 🤖 Agentic CI Diagnostics',
+              '',
+              `**Status:** ❌ CI pipeline failed on branch \`${branch}\``,
+              `**Failed jobs:** ${jobNames}`,
+              `**Workflow run:** [View logs](${runUrl})`,
+              '',
+              '### Failed job log snippets',
+              logSection,
+              '',
+              '---',
+              '⏳ _Attempting automated diagnosis and fix — this comment will be updated with results…_',
+              '',
+              '_Powered by GitHub Copilot Agentic Workflow_',
+            ].join('\n');
 
-**Next Steps:**
-- Attempting automated diagnosis and fix...
-- I will update this comment with findings
-- If auto-fix succeeds, I'll commit and push changes
-- If not, manual intervention may be needed
-
----
-*Powered by GitHub Copilot Agentic Workflow*
-`;
-            
-            await github.rest.issues.createComment({
+            const { data: comment } = await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: diagnosticComment,
+              body,
             });
-            
-            console.log(`Posted diagnostic comment on PR #${prNumber}`);
 
+            core.setOutput('comment_id', String(comment.id));
+            core.info(`Posted diagnostic comment ${comment.id} on PR #${prNumber}`);
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          PR_BRANCH: ${{ steps.pr-info.outputs.pr_branch }}
+          FAILED_JOB_NAMES: ${{ steps.logs.outputs.failed_job_names }}
+          LOG_SECTION: ${{ steps.logs.outputs.log_section }}
+          RUN_URL: ${{ steps.logs.outputs.run_url }}
+
+      # ── 5. Set up Node.js ──────────────────────────────────────────────────
       - name: Set up Node.js
-        if: steps.pr-info.outputs.pr_number
+        if: steps.pr-info.outputs.pr_number != ''
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
-        if: steps.pr-info.outputs.pr_number
+        if: steps.pr-info.outputs.pr_number != ''
         run: npm ci
 
+      # ── 6. Run tools and capture failure output ────────────────────────────
       - name: Analyze failures
-        if: steps.pr-info.outputs.pr_number
         id: analysis
+        if: steps.pr-info.outputs.pr_number != ''
         run: |
-          echo "=== Running Tests ===" 
-          npm test -- --ci 2>&1 | tee test-output.txt || true
-          
-          echo "=== Running Lint ===" 
-          npm run lint 2>&1 | tee lint-output.txt || true
-          
-          echo "=== TypeScript Check ===" 
-          npx tsc --noEmit 2>&1 | tee tsc-output.txt || true
-          
-          if grep -q "FAIL" test-output.txt; then
-            echo "TEST_FAILED=true" >> $GITHUB_OUTPUT
-          fi
-          
-          if grep -q "error" lint-output.txt; then
-            echo "LINT_FAILED=true" >> $GITHUB_OUTPUT
+          echo "=== Running Tests ==="
+          npm test -- --ci 2>&1 | tee /tmp/test-output.txt || true
+
+          echo "=== Running Lint ==="
+          npm run lint 2>&1 | tee /tmp/lint-output.txt || true
+
+          echo "=== TypeScript Check ==="
+          npx tsc --noEmit 2>&1 | tee /tmp/tsc-output.txt || true
+
+          # Detect failures
+          grep -qE "^(FAIL|Tests failed)" /tmp/test-output.txt \
+            && echo "TEST_FAILED=true" >> "$GITHUB_OUTPUT" || true
+          grep -qiE "(error|warning.*error)" /tmp/lint-output.txt \
+            && echo "LINT_FAILED=true" >> "$GITHUB_OUTPUT" || true
+          grep -qE "error TS" /tmp/tsc-output.txt \
+            && echo "TSC_FAILED=true"  >> "$GITHUB_OUTPUT" || true
+
+      # ── 7. Attempt auto-fix: ESLint --fix ─────────────────────────────────
+      - name: Auto-fix lint errors
+        id: lint-fix
+        if: >-
+          steps.pr-info.outputs.pr_number != '' &&
+          steps.analysis.outputs.LINT_FAILED == 'true'
+        run: |
+          npm run lint -- --fix 2>&1 | tee /tmp/lint-fix-output.txt || true
+          if git diff --quiet; then
+            echo "CHANGES=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "CHANGES=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update comment with analysis
-        if: steps.pr-info.outputs.pr_number && (steps.analysis.outputs.TEST_FAILED || steps.analysis.outputs.LINT_FAILED)
+      # ── 8. Use GitHub Models (Copilot) to analyse remaining failures ───────
+      # GitHub Models API supports GITHUB_TOKEN authentication from Actions workflows:
+      # https://docs.github.com/en/github-models/use-github-models/integrating-ai-models-into-your-development-workflow#using-github-models-in-github-actions
+      - name: AI-powered failure analysis
+        id: ai-analysis
+        if: steps.pr-info.outputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = parseInt('${{ steps.pr-info.outputs.pr_number }}');
-            const testFailed = '${{ steps.analysis.outputs.TEST_FAILED }}' === 'true';
-            const lintFailed = '${{ steps.analysis.outputs.LINT_FAILED }}' === 'true';
-            
-            let analysisComment = `## 🔍 Failure Analysis\n\n`;
-            analysisComment += `**Issues Detected:**\n`;
-            if (testFailed) analysisComment += `- ❌ Unit tests are failing\n`;
-            if (lintFailed) analysisComment += `- ❌ Linting errors detected\n`;
-            
-            analysisComment += `\n**Recommendation:** Manual review required - consider running \`npm test\` and \`npm run lint\` locally to debug further.\n\n`;
-            analysisComment += `*Note: Full automated fixes require Copilot Coding Agent integration. For now, this workflow provides diagnostics and visibility.*`;
-            
-            // Get existing comments to update the latest one
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-            });
-            
-            const diagnosticComment = comments.find(c => 
-              c.body.includes('Agentic CI Diagnostics')
-            );
-            
-            if (diagnosticComment) {
+            const fs = require('fs');
+
+            // Gather failure context
+            const readFile = (p) => { try { return fs.readFileSync(p, 'utf8').slice(-3000); } catch (e) { core.debug(`Could not read ${p}: ${e.message}`); return ''; } };
+            const testOut  = readFile('/tmp/test-output.txt');
+            const lintOut  = readFile('/tmp/lint-output.txt');
+            const tscOut   = readFile('/tmp/tsc-output.txt');
+
+            const hasFailures = testOut || lintOut || tscOut;
+            if (!hasFailures) {
+              core.setOutput('ai_summary', '_No failure output captured for AI analysis._');
+              return;
+            }
+
+            const prompt = [
+              'You are a senior TypeScript/React developer reviewing CI failures.',
+              'Analyse the following CI output and provide:',
+              '1. A brief summary of what failed and why.',
+              '2. Concrete fix suggestions (code snippets if relevant).',
+              '3. Whether the failures are auto-fixable with `npm run lint -- --fix` or `npx tsc --noEmit`.',
+              '',
+              testOut  ? `### Jest test output (last 3000 chars)\n\`\`\`\n${testOut}\n\`\`\`` : '',
+              lintOut  ? `### ESLint output (last 3000 chars)\n\`\`\`\n${lintOut}\n\`\`\`` : '',
+              tscOut   ? `### TypeScript output (last 3000 chars)\n\`\`\`\n${tscOut}\n\`\`\`` : '',
+            ].filter(Boolean).join('\n');
+
+            try {
+              const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.GITHUB_TOKEN}`,
+                },
+                body: JSON.stringify({
+                  model: 'gpt-4o-mini',
+                  messages: [{ role: 'user', content: prompt }],
+                  max_tokens: 800,
+                  temperature: 0.2,
+                }),
+              });
+
+              if (!response.ok) {
+                const err = await response.text();
+                core.warning(`GitHub Models API returned ${response.status}: ${err}`);
+                core.setOutput('ai_summary', '_AI analysis unavailable (API error)._');
+                return;
+              }
+
+              const json = await response.json();
+              const aiText = json.choices?.[0]?.message?.content ?? '';
+              core.setOutput('ai_summary', aiText);
+            } catch (e) {
+              core.warning(`AI analysis failed: ${e.message}`);
+              core.setOutput('ai_summary', '_AI analysis unavailable._');
+            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 9. Commit any auto-fixed files ─────────────────────────────────────
+      - name: Commit auto-fixes
+        id: commit
+        if: >-
+          steps.pr-info.outputs.pr_number != '' &&
+          steps.lint-fix.outputs.CHANGES == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: auto-fix ESLint errors via CI auto-fix workflow [skip actions]"
+          git push origin HEAD:${{ steps.pr-info.outputs.pr_branch }}
+          echo "COMMITTED=true" >> "$GITHUB_OUTPUT"
+
+      # ── 10. Update the PR comment with the final results ───────────────────
+      - name: Update PR comment with results
+        if: steps.pr-info.outputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commentId   = Number(process.env.COMMENT_ID);
+            const prNumber    = Number(process.env.PR_NUMBER);
+            const branch      = process.env.PR_BRANCH;
+            const jobNames    = process.env.FAILED_JOB_NAMES || '_(unknown)_';
+            const logSection  = process.env.LOG_SECTION;
+            const runUrl      = process.env.RUN_URL;
+            const testFailed  = process.env.TEST_FAILED  === 'true';
+            const lintFailed  = process.env.LINT_FAILED  === 'true';
+            const tscFailed   = process.env.TSC_FAILED   === 'true';
+            const lintFixed   = process.env.LINT_CHANGES === 'true';
+            const committed   = process.env.COMMITTED    === 'true';
+            const aiSummary   = process.env.AI_SUMMARY   || '_No AI summary available._';
+
+            // Build issues list
+            const issues = [];
+            if (testFailed) issues.push('❌ Unit tests failing');
+            if (lintFailed) issues.push(lintFixed ? '✅ ESLint errors (auto-fixed and committed)' : '❌ ESLint errors');
+            if (tscFailed)  issues.push('❌ TypeScript type errors');
+            if (!issues.length) issues.push('✅ No issues detected on re-run');
+
+            const autoFixStatus = committed
+              ? '✅ ESLint auto-fix committed — re-run CI to verify.'
+              : (lintFailed && !lintFixed)
+                ? '⚠️ Lint errors could not be auto-fixed — manual fix required.'
+                : '_(No auto-fixable changes detected.)_';
+
+            const body = [
+              '## 🤖 Agentic CI Diagnostics',
+              '',
+              `**Status:** ❌ CI pipeline failed on branch \`${branch}\``,
+              `**Failed jobs:** ${jobNames}`,
+              `**Workflow run:** [View logs](${runUrl})`,
+              '',
+              '### Failed job log snippets',
+              logSection,
+              '',
+              '---',
+              '### 🔍 Analysis results',
+              '',
+              '**Issues detected:**',
+              issues.map(i => `- ${i}`).join('\n'),
+              '',
+              '**Auto-fix status:**',
+              autoFixStatus,
+              '',
+              '### 🤖 Copilot AI diagnosis',
+              '',
+              aiSummary,
+              '',
+              '---',
+              '_Powered by GitHub Copilot Agentic Workflow_',
+            ].join('\n');
+
+            if (commentId) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                comment_id: diagnosticComment.id,
-                body: diagnosticComment.body + `\n\n---\n${analysisComment}`,
+                comment_id: commentId,
+                body,
+              });
+              core.info(`Updated comment ${commentId} on PR #${prNumber}`);
+            } else {
+              // Fallback: post a new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
               });
             }
+        env:
+          COMMENT_ID: ${{ steps.initial-comment.outputs.comment_id }}
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          PR_BRANCH: ${{ steps.pr-info.outputs.pr_branch }}
+          FAILED_JOB_NAMES: ${{ steps.logs.outputs.failed_job_names }}
+          LOG_SECTION: ${{ steps.logs.outputs.log_section }}
+          RUN_URL: ${{ steps.logs.outputs.run_url }}
+          TEST_FAILED: ${{ steps.analysis.outputs.TEST_FAILED }}
+          LINT_FAILED: ${{ steps.analysis.outputs.LINT_FAILED }}
+          TSC_FAILED: ${{ steps.analysis.outputs.TSC_FAILED }}
+          LINT_CHANGES: ${{ steps.lint-fix.outputs.CHANGES }}
+          COMMITTED: ${{ steps.commit.outputs.COMMITTED }}
+          AI_SUMMARY: ${{ steps.ai-analysis.outputs.ai_summary }}
