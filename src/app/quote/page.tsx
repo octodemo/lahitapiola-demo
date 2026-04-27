@@ -7,11 +7,6 @@ import Link from "next/link";
 
 // ===========================================================================
 // DEMO MOMENT 2 — Bundle discount is already implemented in QuoteContext.
-// The TODO below is intentionally left for the live Copilot demo:
-//
-// TODO: The bundle discount badge below only appears when bundleDiscountActive
-//       is true, but the discount isn't shown as a line item in the breakdown.
-//       Ask Copilot to add a "Bundle discount (–10%)" row to the summary table.
 // ===========================================================================
 
 export default function QuotePage() {
@@ -152,6 +147,13 @@ export default function QuotePage() {
                 <span>Subtotal ({items.length} {items.length === 1 ? "policy" : "policies"})</span>
                 <span className="font-medium">€{totalMonthlyWithTax.toFixed(2)}/mo</span>
               </div>
+
+              {bundleDiscountActive && (
+                <div className="border-t border-gray-100 pt-3 flex justify-between text-gray-600">
+                  <span>Bundle discount (–{(BUNDLE_DISCOUNT_RATE * 100).toFixed(0)}%)</span>
+                  <span className="font-medium text-green-600">–€{bundleDiscountAmount.toFixed(2)}/mo</span>
+                </div>
+              )}
 
               <div className="border-t border-gray-100 pt-3 flex justify-between font-black text-lg text-gray-900">
                 <span>Monthly total</span>
